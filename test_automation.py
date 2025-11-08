@@ -18,7 +18,9 @@ from automation_helper import (
     DesktopLauncher,
     ResponseMonitor,
     AutomatedBridge,
-    ProposalExecutor  # Task 5用
+    ProposalExecutor,  # Task 5用
+    ErrorHandler,  # Task 6用
+    CheckpointManager  # Task 6用
 )
 
 
@@ -1046,6 +1048,259 @@ class TestProposalExecutor(unittest.TestCase):
         """ユーザー承認が大文字Yで受け入れられることを確認"""
         result = self.executor.request_user_approval("Test proposal")
         self.assertTrue(result)
+
+
+class TestErrorHandler(unittest.TestCase):
+    """エラーハンドリング機能のテスト"""
+
+    def setUp(self):
+        """テスト前の準備"""
+        self.config = AutomationConfig()
+        self.handler = ErrorHandler(self.config)
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        """テスト後のクリーンアップ"""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def test_error_handler_initialization(self):
+        """ErrorHandlerが正しく初期化されることを確認"""
+        self.assertIsNotNone(self.handler.config)
+        self.assertIsNotNone(self.handler.log_dir)
+        self.assertTrue(self.handler.log_dir.exists())
+
+    def test_classify_error_critical(self):
+        """致命的エラーの分類を確認"""
+        error = Exception("Critical system failure")
+        severity = self.handler.classify_error(error, "system_crash")
+        self.assertEqual(severity, "critical")
+
+    def test_classify_error_recoverable(self):
+        """回復可能エラーの分類を確認"""
+        error = FileNotFoundError("File not found")
+        severity = self.handler.classify_error(error, "file_operation")
+        self.assertEqual(severity, "recoverable")
+
+    def test_classify_error_warning(self):
+        """警告レベルエラーの分類を確認"""
+        error = ValueError("Invalid value")
+        severity = self.handler.classify_error(error, "validation")
+        self.assertEqual(severity, "warning")
+
+    def test_log_error(self):
+        """エラーログ記録を確認"""
+        error = Exception("Test error")
+        log_file = self.handler.log_error(
+            error=error,
+            context="test_context",
+            severity="critical"
+        )
+
+        # ログファイルが作成されていることを確認
+        self.assertIsNotNone(log_file)
+        self.assertTrue(Path(log_file).exists())
+
+        # ログ内容を確認
+        log_content = Path(log_file).read_text(encoding="utf-8")
+        self.assertIn("Test error", log_content)
+        self.assertIn("critical", log_content)
+        self.assertIn("test_context", log_content)
+
+    def test_handle_error_critical(self):
+        """致命的エラーのハンドリングを確認"""
+        error = Exception("Critical error")
+        result = self.handler.handle_error(
+            error=error,
+            context="critical_operation",
+            raise_on_critical=False
+        )
+
+        self.assertFalse(result)  # 致命的エラーはFalseを返す
+
+    def test_handle_error_recoverable(self):
+        """回復可能エラーのハンドリングを確認"""
+        error = FileNotFoundError("File not found")
+        result = self.handler.handle_error(
+            error=error,
+            context="file_operation"
+        )
+
+        self.assertTrue(result)  # 回復可能エラーはTrueを返す
+
+
+class TestCheckpointManager(unittest.TestCase):
+    """チェックポイントとロールバック機能のテスト"""
+
+    def setUp(self):
+        """テスト前の準備"""
+        self.config = AutomationConfig()
+        self.manager = CheckpointManager(self.config)
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        """テスト後のクリーンアップ"""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def test_checkpoint_manager_initialization(self):
+        """CheckpointManagerが正しく初期化されることを確認"""
+        self.assertIsNotNone(self.manager.config)
+        self.assertIsNotNone(self.manager.checkpoint_dir)
+        self.assertTrue(self.manager.checkpoint_dir.exists())
+
+    def test_create_checkpoint(self):
+        """チェックポイントの作成を確認"""
+        # テスト用ファイル作成
+        test_file1 = self.temp_dir / "file1.py"
+        test_file2 = self.temp_dir / "file2.py"
+        test_file1.write_text("# Content 1", encoding="utf-8")
+        test_file2.write_text("# Content 2", encoding="utf-8")
+
+        files = [str(test_file1), str(test_file2)]
+
+        # チェックポイント作成
+        checkpoint_id = self.manager.create_checkpoint(
+            files=files,
+            description="Test checkpoint"
+        )
+
+        # チェックポイントIDが返されることを確認
+        self.assertIsNotNone(checkpoint_id)
+
+        # チェックポイントディレクトリが存在することを確認
+        checkpoint_path = self.manager.checkpoint_dir / checkpoint_id
+        self.assertTrue(checkpoint_path.exists())
+
+    def test_rollback_checkpoint(self):
+        """チェックポイントのロールバックを確認"""
+        # テスト用ファイル作成
+        test_file = self.temp_dir / "test.py"
+        test_file.write_text("# Original", encoding="utf-8")
+
+        # チェックポイント作成
+        checkpoint_id = self.manager.create_checkpoint(
+            files=[str(test_file)],
+            description="Before change"
+        )
+
+        # ファイル変更
+        test_file.write_text("# Modified", encoding="utf-8")
+        self.assertEqual(test_file.read_text(encoding="utf-8"), "# Modified")
+
+        # ロールバック実行
+        result = self.manager.rollback(checkpoint_id)
+        self.assertTrue(result)
+
+        # ファイルが元に戻っていることを確認
+        self.assertEqual(test_file.read_text(encoding="utf-8"), "# Original")
+
+    def test_delete_new_files_on_rollback(self):
+        """ロールバック時に新規ファイルが削除されることを確認"""
+        # 既存ファイル作成
+        existing_file = self.temp_dir / "existing.py"
+        existing_file.write_text("# Existing", encoding="utf-8")
+
+        # チェックポイント作成
+        checkpoint_id = self.manager.create_checkpoint(
+            files=[str(existing_file)],
+            description="Before new files"
+        )
+
+        # 新規ファイル作成
+        new_file = self.temp_dir / "new.py"
+        new_file.write_text("# New file", encoding="utf-8")
+        self.assertTrue(new_file.exists())
+
+        # ロールバック実行（新規ファイルのパスを渡す）
+        result = self.manager.rollback(
+            checkpoint_id,
+            new_files=[str(new_file)]
+        )
+        self.assertTrue(result)
+
+        # 新規ファイルが削除されていることを確認
+        self.assertFalse(new_file.exists())
+
+        # 既存ファイルは残っていることを確認
+        self.assertTrue(existing_file.exists())
+
+    def test_list_checkpoints(self):
+        """チェックポイント一覧の取得を確認"""
+        # チェックポイント作成
+        test_file = self.temp_dir / "test.py"
+        test_file.write_text("# Test", encoding="utf-8")
+
+        cp1 = self.manager.create_checkpoint([str(test_file)], "Checkpoint 1")
+
+        # 異なるタイムスタンプを確保するため少し待機
+        import time
+        time.sleep(1)
+
+        cp2 = self.manager.create_checkpoint([str(test_file)], "Checkpoint 2")
+
+        # 一覧取得
+        checkpoints = self.manager.list_checkpoints()
+
+        # 作成したチェックポイントが含まれることを確認
+        self.assertGreaterEqual(len(checkpoints), 2)
+
+
+class TestAutomationModeManager(unittest.TestCase):
+    """自動化モード管理機能のテスト"""
+
+    def test_toggle_automation_mode(self):
+        """自動化モードの切り替えを確認"""
+        config = AutomationConfig()
+
+        # 初期状態（自動化有効）
+        self.assertTrue(config.auto_launch_desktop)
+
+        # 自動化を無効化
+        config.auto_launch_desktop = False
+        self.assertFalse(config.auto_launch_desktop)
+
+        # 自動化を有効化
+        config.auto_launch_desktop = True
+        self.assertTrue(config.auto_launch_desktop)
+
+    def test_automated_bridge_with_manual_mode(self):
+        """AutomatedBridgeが手動モードで動作することを確認"""
+        config = AutomationConfig()
+        config.auto_launch_desktop = False  # 手動モード
+
+        bridge = AutomatedBridge(config)
+
+        # 設定が反映されていることを確認
+        self.assertFalse(bridge.config.auto_launch_desktop)
+
+    @patch.object(DesktopLauncher, 'launch_with_retry', return_value=False)
+    def test_fallback_to_manual_mode_on_launch_failure(self, mock_launch):
+        """起動失敗時に手動モードにフォールバックすることを確認"""
+        config = AutomationConfig()
+        config.auto_launch_desktop = True
+
+        bridge = AutomatedBridge(config)
+
+        # リクエスト作成
+        request_id = bridge.create_automated_request(
+            title="Test",
+            problem="Test problem",
+            tried=["Test tried"],
+            files_to_analyze=[]
+        )
+
+        # ワークフロー実行（起動が失敗するのでmanual_modeになるはず）
+        result = bridge.run_automated_workflow(
+            title="Test",
+            problem="Test problem",
+            tried=["Test tried"],
+            files_to_analyze=[]
+        )
+
+        # 手動モードにフォールバックしたことを確認
+        self.assertIsNotNone(result)
+        self.assertEqual(result.get("status"), "manual_mode")
 
 
 if __name__ == "__main__":

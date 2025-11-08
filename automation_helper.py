@@ -1007,3 +1007,344 @@ class ProposalExecutor:
         except (KeyboardInterrupt, EOFError):
             print(f"\n\n⚠️  中断されました。\n")
             return False
+
+
+class ErrorHandler:
+    """
+    エラーハンドリングとログ記録を管理するクラス
+
+    エラーを分類（致命的/回復可能/警告）し、
+    適切なログ記録と通知を行います。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        ErrorHandlerを初期化
+
+        Args:
+            config: 自動化設定
+        """
+        self.config = config
+
+        # ログディレクトリの作成
+        self.log_dir = Path.home() / "AI-Workspace/claude-bridge/logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+    def classify_error(
+        self,
+        error: Exception,
+        context: str = ""
+    ) -> str:
+        """
+        エラーを分類
+
+        Args:
+            error: 発生したエラー
+            context: エラーが発生したコンテキスト
+
+        Returns:
+            エラーの重大度 ("critical", "recoverable", "warning")
+        """
+        # 致命的エラー
+        if "system_crash" in context or "critical" in context:
+            return "critical"
+        if isinstance(error, (SystemError, MemoryError, KeyboardInterrupt)):
+            return "critical"
+
+        # 回復可能エラー
+        if isinstance(error, (FileNotFoundError, PermissionError, IOError)):
+            return "recoverable"
+        if "file_operation" in context or "network" in context:
+            return "recoverable"
+
+        # 警告
+        if isinstance(error, (ValueError, TypeError)):
+            return "warning"
+        if "validation" in context:
+            return "warning"
+
+        # デフォルトは回復可能
+        return "recoverable"
+
+    def log_error(
+        self,
+        error: Exception,
+        context: str = "",
+        severity: str = "recoverable"
+    ) -> Optional[str]:
+        """
+        エラーをログファイルに記録
+
+        Args:
+            error: 発生したエラー
+            context: エラーが発生したコンテキスト
+            severity: エラーの重大度
+
+        Returns:
+            ログファイルのパス（成功時）、None（失敗時）
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_filename = f"error_{severity}_{timestamp}.log"
+            log_file = self.log_dir / log_filename
+
+            # ログ内容
+            log_content = f"""{'='*60}
+エラーログ
+{'='*60}
+タイムスタンプ: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+重大度: {severity}
+コンテキスト: {context}
+エラー型: {type(error).__name__}
+エラーメッセージ: {str(error)}
+
+スタックトレース:
+{self._format_traceback(error)}
+{'='*60}
+"""
+
+            log_file.write_text(log_content, encoding="utf-8")
+
+            print(f"📝 エラーログ記録: {log_file}")
+            return str(log_file)
+
+        except Exception as e:
+            print(f"⚠️  ログ記録エラー: {e}")
+            return None
+
+    def _format_traceback(self, error: Exception) -> str:
+        """
+        スタックトレースをフォーマット
+
+        Args:
+            error: 発生したエラー
+
+        Returns:
+            フォーマットされたスタックトレース
+        """
+        import traceback
+        return ''.join(traceback.format_exception(
+            type(error), error, error.__traceback__
+        ))
+
+    def handle_error(
+        self,
+        error: Exception,
+        context: str = "",
+        raise_on_critical: bool = False
+    ) -> bool:
+        """
+        エラーを処理
+
+        Args:
+            error: 発生したエラー
+            context: エラーが発生したコンテキスト
+            raise_on_critical: 致命的エラー時に例外を再発生させるか
+
+        Returns:
+            継続可能な場合True、中断すべき場合False
+        """
+        # エラー分類
+        severity = self.classify_error(error, context)
+
+        # ログ記録
+        self.log_error(error, context, severity)
+
+        # 重大度に応じた通知
+        if severity == "critical":
+            print(f"\n🚨 致命的エラー: {error}")
+            print(f"   コンテキスト: {context}")
+            print(f"   処理を中断します。\n")
+            if raise_on_critical:
+                raise error
+            return False
+
+        elif severity == "recoverable":
+            print(f"\n⚠️  回復可能エラー: {error}")
+            print(f"   コンテキスト: {context}")
+            print(f"   処理を続行します。\n")
+            return True
+
+        else:  # warning
+            print(f"\n💡 警告: {error}")
+            print(f"   コンテキスト: {context}\n")
+            return True
+
+
+class CheckpointManager:
+    """
+    チェックポイント作成とロールバック管理クラス
+
+    変更前の状態をバックアップし、
+    必要に応じて元の状態に復元します。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        CheckpointManagerを初期化
+
+        Args:
+            config: 自動化設定
+        """
+        self.config = config
+
+        # チェックポイントディレクトリの作成
+        self.checkpoint_dir = Path.home() / "AI-Workspace/claude-bridge/checkpoints"
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    def create_checkpoint(
+        self,
+        files: List[str],
+        description: str = ""
+    ) -> Optional[str]:
+        """
+        チェックポイントを作成
+
+        Args:
+            files: バックアップするファイルのリスト
+            description: チェックポイントの説明
+
+        Returns:
+            チェックポイントID（成功時）、None（失敗時）
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            checkpoint_id = f"cp_{timestamp}"
+            checkpoint_path = self.checkpoint_dir / checkpoint_id
+            checkpoint_path.mkdir(exist_ok=True)
+
+            # メタデータ
+            metadata = {
+                "checkpoint_id": checkpoint_id,
+                "timestamp": timestamp,
+                "description": description,
+                "files": []
+            }
+
+            # 各ファイルをバックアップ
+            for file_path in files:
+                source_path = Path(file_path)
+                if not source_path.exists():
+                    continue
+
+                # 相対パスを保持してバックアップ
+                backup_name = source_path.name
+                backup_path = checkpoint_path / backup_name
+
+                backup_path.write_text(
+                    source_path.read_text(encoding="utf-8"),
+                    encoding="utf-8"
+                )
+
+                metadata["files"].append({
+                    "original_path": str(source_path),
+                    "backup_name": backup_name
+                })
+
+            # メタデータを保存
+            metadata_file = checkpoint_path / "metadata.json"
+            metadata_file.write_text(
+                json.dumps(metadata, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+
+            print(f"💾 チェックポイント作成: {checkpoint_id}")
+            print(f"   ファイル数: {len(metadata['files'])}")
+
+            return checkpoint_id
+
+        except Exception as e:
+            print(f"⚠️  チェックポイント作成エラー: {e}")
+            return None
+
+    def rollback(
+        self,
+        checkpoint_id: str,
+        new_files: List[str] = None
+    ) -> bool:
+        """
+        チェックポイントにロールバック
+
+        Args:
+            checkpoint_id: ロールバックするチェックポイントID
+            new_files: 削除する新規ファイルのリスト（オプション）
+
+        Returns:
+            ロールバック成功時True、失敗時False
+        """
+        try:
+            checkpoint_path = self.checkpoint_dir / checkpoint_id
+            if not checkpoint_path.exists():
+                print(f"⚠️  チェックポイントが見つかりません: {checkpoint_id}")
+                return False
+
+            # メタデータ読み込み
+            metadata_file = checkpoint_path / "metadata.json"
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+
+            print(f"\n{'='*60}")
+            print(f"🔄 ロールバック開始: {checkpoint_id}")
+            print(f"{'='*60}\n")
+
+            # ファイルを元に戻す
+            for file_info in metadata["files"]:
+                original_path = Path(file_info["original_path"])
+                backup_name = file_info["backup_name"]
+                backup_path = checkpoint_path / backup_name
+
+                if backup_path.exists():
+                    original_path.write_text(
+                        backup_path.read_text(encoding="utf-8"),
+                        encoding="utf-8"
+                    )
+                    print(f"✅ 復元: {original_path}")
+
+            # 新規ファイルの削除
+            if new_files:
+                for new_file in new_files:
+                    new_path = Path(new_file)
+                    if new_path.exists():
+                        new_path.unlink()
+                        print(f"🗑️  削除: {new_path}")
+
+            print(f"\n{'='*60}")
+            print(f"✅ ロールバック完了")
+            print(f"{'='*60}\n")
+
+            return True
+
+        except Exception as e:
+            print(f"⚠️  ロールバックエラー: {e}")
+            return False
+
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """
+        チェックポイント一覧を取得
+
+        Returns:
+            チェックポイント情報のリスト
+        """
+        checkpoints = []
+
+        try:
+            for checkpoint_path in self.checkpoint_dir.iterdir():
+                if not checkpoint_path.is_dir():
+                    continue
+
+                metadata_file = checkpoint_path / "metadata.json"
+                if metadata_file.exists():
+                    metadata = json.loads(
+                        metadata_file.read_text(encoding="utf-8")
+                    )
+                    checkpoints.append(metadata)
+
+            # タイムスタンプでソート（新しい順）
+            checkpoints.sort(
+                key=lambda x: x.get("timestamp", ""),
+                reverse=True
+            )
+
+        except Exception as e:
+            print(f"⚠️  チェックポイント一覧取得エラー: {e}")
+
+        return checkpoints

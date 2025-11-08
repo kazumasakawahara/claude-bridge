@@ -1,0 +1,11 @@
+{
+  "checkpoint_id": "cp_20251109_050523",
+  "timestamp": "20251109_050523",
+  "description": "Before change",
+  "files": [
+    {
+      "original_path": "/var/folders/yf/vc3m_tyj6cj6tlpwz49j75fh0000gn/T/tmpcc9pu2qa/test.py",
+      "backup_name": "test.py"
+    }
+  ]
+}
