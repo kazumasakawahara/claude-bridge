@@ -15,7 +15,9 @@ Kiro-style Spec Driven Development implementation using claude code slash comman
 **Specs** (`.kiro/specs/`) - Formalize development process for individual features
 
 ### Active Specifications
-- Check `.kiro/specs/` for active specifications
+- **automated-workflow**: ワークフローの完全自動化（Claude Code → Claude Desktop → 実行）
+  - Status: initialized
+  - Next: `/kiro:spec-requirements automated-workflow`
 - Use `/kiro:spec-status [feature-name]` to check progress
 
 ## Development Guidelines
