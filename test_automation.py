@@ -1303,5 +1303,147 @@ class TestAutomationModeManager(unittest.TestCase):
         self.assertEqual(result.get("status"), "manual_mode")
 
 
+class TestConfigValidation(unittest.TestCase):
+    """設定ファイルの検証機能のテスト"""
+
+    def setUp(self):
+        """テスト前の準備"""
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.config_file = self.test_dir / "automation_config.json"
+
+    def tearDown(self):
+        """テスト後のクリーンアップ"""
+        if self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
+
+    def test_validate_config_valid(self):
+        """有効な設定の検証を確認"""
+        valid_config = {
+            "auto_launch_desktop": True,
+            "launch_timeout": 30,
+            "launch_retry_count": 3,
+            "response_timeout": 1800,
+            "polling_interval": 1
+        }
+        self.config_file.write_text(
+            json.dumps(valid_config, indent=2),
+            encoding="utf-8"
+        )
+
+        config = AutomationConfig(str(self.config_file))
+        self.assertTrue(config.validate_config())
+
+    def test_validate_config_invalid_timeout(self):
+        """無効なタイムアウト値の検証を確認"""
+        config = AutomationConfig()
+        # 直接無効な値を設定
+        config.launch_timeout = -10
+        self.assertFalse(config.validate_config())
+
+    def test_save_config(self):
+        """設定の保存を確認"""
+        config = AutomationConfig()
+        config.auto_launch_desktop = False
+        config.launch_timeout = 60
+
+        result = config.save_config(str(self.config_file))
+        self.assertTrue(result)
+
+        # 保存された設定を読み込んで確認
+        loaded_config = AutomationConfig(str(self.config_file))
+        self.assertFalse(loaded_config.auto_launch_desktop)
+        self.assertEqual(loaded_config.launch_timeout, 60)
+
+
+class TestFullWorkflowIntegration(unittest.TestCase):
+    """完全ワークフローの統合テスト"""
+
+    def setUp(self):
+        """テスト前の準備"""
+        self.config = AutomationConfig()
+        self.config.auto_launch_desktop = False  # 統合テストでは手動モード
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        """テスト後のクリーンアップ"""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    @patch.object(ResponseMonitor, 'wait_for_response', return_value=True)
+    @patch.object(ResponseMonitor, 'read_response')
+    def test_end_to_end_workflow_with_proposal_execution(self, mock_read, mock_wait):
+        """リクエスト作成から提案実行までのエンドツーエンドワークフローを確認"""
+        # モックのレスポンス
+        mock_response = {
+            "analysis": {
+                "recommendations": [
+                    {"title": "Fix Bug", "description": "Fix the memory leak"}
+                ],
+                "implementation_steps": [
+                    {"step": 1, "description": "Identify leak", "action": "Use profiler"},
+                    {"step": 2, "description": "Fix code", "action": "Update allocation"}
+                ],
+                "code_files": []
+            }
+        }
+        mock_read.return_value = mock_response
+
+        # AutomatedBridgeでワークフロー実行
+        bridge = AutomatedBridge(self.config)
+        result = bridge.run_automated_workflow(
+            title="Memory Leak",
+            problem="Application using too much memory",
+            tried=["Checked for obvious leaks"],
+            files_to_analyze=[]
+        )
+
+        # ワークフローが完了することを確認
+        self.assertIsNotNone(result)
+
+        # ProposalExecutorで提案実行
+        executor = ProposalExecutor(self.config)
+        steps = executor.extract_implementation_steps(mock_response)
+        self.assertEqual(len(steps), 2)
+
+        # ステップ実行
+        results = executor.execute_all_steps(steps)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(results))
+
+    def test_error_recovery_workflow(self):
+        """エラー発生時の回復ワークフローを確認"""
+        handler = ErrorHandler(self.config)
+
+        # 回復可能エラーの処理
+        error = FileNotFoundError("test.txt not found")
+        can_continue = handler.handle_error(error, "file_operation")
+        self.assertTrue(can_continue)
+
+    def test_checkpoint_and_rollback_workflow(self):
+        """チェックポイント作成とロールバックのワークフローを確認"""
+        manager = CheckpointManager(self.config)
+
+        # テストファイル作成
+        test_file = self.temp_dir / "important.txt"
+        test_file.write_text("Original content", encoding="utf-8")
+
+        # チェックポイント作成
+        checkpoint_id = manager.create_checkpoint(
+            files=[str(test_file)],
+            description="Before risky operation"
+        )
+        self.assertIsNotNone(checkpoint_id)
+
+        # ファイル変更
+        test_file.write_text("Modified content", encoding="utf-8")
+
+        # ロールバック
+        result = manager.rollback(checkpoint_id)
+        self.assertTrue(result)
+
+        # 元の内容に戻っていることを確認
+        self.assertEqual(test_file.read_text(encoding="utf-8"), "Original content")
+
+
 if __name__ == "__main__":
     unittest.main()

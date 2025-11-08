@@ -178,6 +178,85 @@ class AutomationConfig:
             "max_retries": self.max_retries
         }
 
+    def validate_config(self) -> bool:
+        """
+        設定値の検証
+
+        Returns:
+            全ての設定値が有効な場合True、そうでない場合False
+        """
+        try:
+            # ブール値の検証
+            if not isinstance(self.enabled, bool):
+                print(f"⚠️  無効な設定: enabled は bool 型である必要があります")
+                return False
+
+            if not isinstance(self.auto_launch_desktop, bool):
+                print(f"⚠️  無効な設定: auto_launch_desktop は bool 型である必要があります")
+                return False
+
+            if not isinstance(self.auto_execute_proposals, bool):
+                print(f"⚠️  無効な設定: auto_execute_proposals は bool 型である必要があります")
+                return False
+
+            if not isinstance(self.create_backups, bool):
+                print(f"⚠️  無効な設定: create_backups は bool 型である必要があります")
+                return False
+
+            # 文字列の検証
+            if not isinstance(self.desktop_app_name, str) or not self.desktop_app_name:
+                print(f"⚠️  無効な設定: desktop_app_name は空でない文字列である必要があります")
+                return False
+
+            # 正の整数の検証
+            if not isinstance(self.launch_timeout, int) or self.launch_timeout <= 0:
+                print(f"⚠️  無効な設定: launch_timeout は正の整数である必要があります")
+                return False
+
+            if not isinstance(self.response_timeout, int) or self.response_timeout <= 0:
+                print(f"⚠️  無効な設定: response_timeout は正の整数である必要があります")
+                return False
+
+            if not isinstance(self.max_retries, int) or self.max_retries <= 0:
+                print(f"⚠️  無効な設定: max_retries は正の整数である必要があります")
+                return False
+
+            # 正の数値の検証（intまたはfloat）
+            if not isinstance(self.polling_interval, (int, float)) or self.polling_interval <= 0:
+                print(f"⚠️  無効な設定: polling_interval は正の数値である必要があります")
+                return False
+
+            return True
+
+        except Exception as e:
+            print(f"⚠️  設定検証エラー: {e}")
+            return False
+
+    def save_config(self, config_path: str) -> bool:
+        """
+        設定を検証してファイルに保存
+
+        Args:
+            config_path: 保存先のファイルパス
+
+        Returns:
+            保存成功時True、失敗時False
+        """
+        try:
+            # 検証
+            if not self.validate_config():
+                print(f"⚠️  無効な設定のため保存できません")
+                return False
+
+            # 保存
+            self.save(config_path)
+            print(f"✅ 設定を保存しました: {config_path}")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  設定保存エラー: {e}")
+            return False
+
 
 class AutomationState:
     """
