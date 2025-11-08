@@ -45,6 +45,23 @@ Claude Codeが実装に困難を感じた時、自動的にClaude Desktopに助�
 
 #### セットアップ
 
+**方法1: CLIツールを使用（推奨）**
+
+```bash
+cd ~/AI-Workspace/claude-bridge/
+
+# 対話的な設定
+python3 configure.py
+
+# クイックセットアップ（デフォルト値使用）
+python3 configure.py --quick
+
+# 現在の設定を確認
+python3 configure.py --show
+```
+
+**方法2: Pythonコードで設定**
+
 ```python
 import sys
 from pathlib import Path
