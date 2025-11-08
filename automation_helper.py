@@ -1175,7 +1175,8 @@ class ErrorHandler:
         # ファイルI/Oエラー（回復可能）
         if isinstance(error, (FileNotFoundError, PermissionError, IOError, OSError)):
             return "recoverable"
-        if "file_operation" in context or "io" in context:
+        # より具体的なマッチングを使用（"validation"に"io"が含まれるため）
+        if "file_operation" in context or context == "io":
             return "recoverable"
 
         # JSON/データ解析エラー（警告）
@@ -1185,9 +1186,10 @@ class ErrorHandler:
             return "warning"
 
         # バリデーションエラー（警告）
-        if isinstance(error, (ValueError, TypeError)):
-            return "warning"
+        # コンテキストを先にチェック（より具体的な判定）
         if "validation" in context:
+            return "warning"
+        if isinstance(error, (ValueError, TypeError)):
             return "warning"
 
         # デフォルトは回復可能
