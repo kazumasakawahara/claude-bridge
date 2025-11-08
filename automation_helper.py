@@ -5,6 +5,8 @@ Claude Code ⇄ Claude Desktop Bridgeの自動化機能を提供します。
 """
 
 import json
+import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -292,3 +294,132 @@ class ExecutionResult:
             "errors": self.errors,
             "rollback_available": self.rollback_available
         }
+
+
+class DesktopLauncher:
+    """
+    Claude Desktopアプリケーションの起動を管理するクラス
+
+    macOSでのアプリケーション起動、プロセス確認、起動完了待機を提供します。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        DesktopLauncherを初期化
+
+        Args:
+            config: 自動化設定
+        """
+        self.config = config
+        self.app_name = config.desktop_app_name
+
+    def launch(self) -> bool:
+        """
+        Claude Desktopアプリケーションを起動
+
+        Returns:
+            起動成功時True、失敗時False
+        """
+        try:
+            # macOSのopenコマンドでアプリケーションを起動
+            result = subprocess.run(
+                ["/usr/bin/open", "-a", self.app_name],
+                capture_output=True,
+                timeout=self.config.launch_timeout
+            )
+
+            # 起動成功を確認
+            return result.returncode == 0
+
+        except Exception as e:
+            print(f"⚠️ アプリケーション起動エラー: {e}")
+            return False
+
+    def is_running(self) -> bool:
+        """
+        アプリケーションが実行中かを確認
+
+        Returns:
+            実行中の場合True、そうでない場合False
+        """
+        try:
+            # pgrepコマンドでプロセスを検索
+            result = subprocess.run(
+                ["pgrep", "-x", self.app_name],
+                capture_output=True,
+                timeout=5
+            )
+
+            # プロセスが見つかった場合はreturncode=0
+            return result.returncode == 0
+
+        except Exception:
+            return False
+
+    def wait_until_ready(self) -> bool:
+        """
+        アプリケーションが起動完了するまで待機
+
+        Returns:
+            起動完了時True、タイムアウト時False
+        """
+        start_time = time.time()
+        timeout = self.config.launch_timeout
+
+        while time.time() - start_time < timeout:
+            if self.is_running():
+                return True
+
+            # 0.5秒待機してから再確認
+            time.sleep(0.5)
+
+        # タイムアウト
+        return False
+
+    def launch_with_retry(self) -> bool:
+        """
+        リトライ機能付きでアプリケーションを起動
+
+        最大max_retries回まで起動を試行します。
+        各リトライの間には1秒の待機時間を設けます。
+
+        Returns:
+            起動成功時True、すべての試行が失敗した場合False
+        """
+        for attempt in range(1, self.config.max_retries + 1):
+            print(f"🔄 起動試行 {attempt}/{self.config.max_retries}...")
+
+            # アプリケーション起動を試行
+            if self.launch():
+                # 起動コマンドが成功したら、実際に起動完了するまで待機
+                if self.wait_until_ready():
+                    print(f"✅ 起動成功 (試行 {attempt}回目)")
+                    return True
+                else:
+                    print(f"⚠️ 起動タイムアウト (試行 {attempt}回目)")
+            else:
+                print(f"⚠️ 起動失敗 (試行 {attempt}回目)")
+
+            # 最後の試行以外では待機
+            if attempt < self.config.max_retries:
+                print("⏳ 1秒待機してから再試行...")
+                time.sleep(1)
+
+        print(f"❌ すべての起動試行が失敗しました ({self.config.max_retries}回)")
+        return False
+
+    def show_manual_fallback_message(self):
+        """
+        手動起動のフォールバックメッセージを表示
+
+        自動起動が失敗した際に、ユーザーに手動起動を促すメッセージを表示します。
+        """
+        print("\n" + "=" * 60)
+        print("⚠️  自動起動に失敗しました")
+        print("=" * 60)
+        print(f"\n📝 次の手順で手動起動してください:")
+        print(f"\n1. Finderまたはアプリケーションフォルダから")
+        print(f"   「{self.app_name}」を手動で起動してください")
+        print(f"\n2. アプリケーションが起動したら、")
+        print(f"   このプログラムを再実行してください")
+        print("\n" + "=" * 60 + "\n")

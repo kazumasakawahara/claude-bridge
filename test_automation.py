@@ -321,5 +321,249 @@ class TestExecutionResult(unittest.TestCase):
         self.assertEqual(len(result_dict["errors"]), 1)
 
 
+class TestDesktopLauncher(unittest.TestCase):
+    """Claude Desktop起動機能のテスト"""
+
+    def test_launch_success(self):
+        """アプリケーションが正常に起動することを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # subprocess.runをモック化
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+
+            success = launcher.launch()
+
+            # 起動成功を確認
+            self.assertTrue(success)
+            # 正しいコマンドが実行されたことを確認
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args[0][0]
+            self.assertEqual(call_args[0], "/usr/bin/open")
+            self.assertEqual(call_args[1], "-a")
+            self.assertEqual(call_args[2], "Claude")
+
+    def test_launch_failure(self):
+        """アプリケーション起動が失敗することを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # subprocess.runが失敗するようモック化
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=1)
+
+            success = launcher.launch()
+
+            # 起動失敗を確認
+            self.assertFalse(success)
+
+    def test_launch_exception(self):
+        """起動時の例外処理を確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # subprocess.runが例外を投げるようモック化
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = Exception("Command not found")
+
+            success = launcher.launch()
+
+            # 例外を適切に処理して失敗を返すことを確認
+            self.assertFalse(success)
+
+    def test_is_running_success(self):
+        """アプリケーションが実行中であることを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # pgrep コマンドが成功(プロセスが見つかった)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0)
+
+            is_running = launcher.is_running()
+
+            # 実行中を確認
+            self.assertTrue(is_running)
+            # pgrepコマンドが実行されたことを確認
+            call_args = mock_run.call_args[0][0]
+            self.assertEqual(call_args[0], "pgrep")
+            self.assertEqual(call_args[1], "-x")
+            self.assertEqual(call_args[2], "Claude")
+
+    def test_is_running_not_found(self):
+        """アプリケーションが実行されていないことを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # pgrep コマンドが失敗(プロセスが見つからない)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=1)
+
+            is_running = launcher.is_running()
+
+            # 実行されていないことを確認
+            self.assertFalse(is_running)
+
+    def test_wait_until_ready_success(self):
+        """起動完了まで待機する機能を確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        config.launch_timeout = 2  # 短いタイムアウトでテスト
+        launcher = DesktopLauncher(config)
+
+        # is_runningが最初はFalse、次にTrueを返すようモック化
+        with patch.object(launcher, "is_running") as mock_is_running:
+            mock_is_running.side_effect = [False, False, True]
+
+            # time.sleepをモック化して高速化
+            with patch("time.sleep"):
+                success = launcher.wait_until_ready()
+
+                # 起動完了を確認
+                self.assertTrue(success)
+                # is_runningが複数回呼ばれたことを確認
+                self.assertEqual(mock_is_running.call_count, 3)
+
+    def test_wait_until_ready_timeout(self):
+        """起動タイムアウトを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        config.launch_timeout = 1  # 短いタイムアウト
+        launcher = DesktopLauncher(config)
+
+        # is_runningが常にFalseを返すようモック化
+        with patch.object(launcher, "is_running") as mock_is_running:
+            mock_is_running.return_value = False
+
+            # time.sleepをモック化
+            with patch("time.sleep"):
+                success = launcher.wait_until_ready()
+
+                # タイムアウトで失敗することを確認
+                self.assertFalse(success)
+
+    def test_launch_with_retry_success_first_attempt(self):
+        """初回の試行で起動成功することを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # launchとwait_until_readyが成功するようモック化
+        with patch.object(launcher, "launch") as mock_launch:
+            with patch.object(launcher, "wait_until_ready") as mock_wait:
+                mock_launch.return_value = True
+                mock_wait.return_value = True
+
+                success = launcher.launch_with_retry()
+
+                # 起動成功を確認
+                self.assertTrue(success)
+                # 1回だけ試行されたことを確認
+                self.assertEqual(mock_launch.call_count, 1)
+                self.assertEqual(mock_wait.call_count, 1)
+
+    def test_launch_with_retry_success_second_attempt(self):
+        """2回目の試行で起動成功することを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # 1回目は失敗、2回目は成功
+        with patch.object(launcher, "launch") as mock_launch:
+            with patch.object(launcher, "wait_until_ready") as mock_wait:
+                mock_launch.side_effect = [False, True]
+                mock_wait.return_value = True
+
+                # time.sleepをモック化
+                with patch("time.sleep"):
+                    success = launcher.launch_with_retry()
+
+                    # 起動成功を確認
+                    self.assertTrue(success)
+                    # 2回試行されたことを確認
+                    self.assertEqual(mock_launch.call_count, 2)
+
+    def test_launch_with_retry_all_attempts_fail(self):
+        """すべての試行が失敗することを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        config.max_retries = 3
+        launcher = DesktopLauncher(config)
+
+        # すべての試行で失敗
+        with patch.object(launcher, "launch") as mock_launch:
+            mock_launch.return_value = False
+
+            # time.sleepをモック化
+            with patch("time.sleep"):
+                success = launcher.launch_with_retry()
+
+                # 起動失敗を確認
+                self.assertFalse(success)
+                # max_retries回試行されたことを確認
+                self.assertEqual(mock_launch.call_count, 3)
+
+    def test_launch_with_retry_respects_retry_interval(self):
+        """リトライ間隔が正しく適用されることを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        config.max_retries = 2
+        launcher = DesktopLauncher(config)
+
+        # すべて失敗させる
+        with patch.object(launcher, "launch") as mock_launch:
+            mock_launch.return_value = False
+
+            # time.sleepをモック化して呼び出しを記録
+            with patch("time.sleep") as mock_sleep:
+                launcher.launch_with_retry()
+
+                # 1回目の失敗後に1秒待機したことを確認
+                mock_sleep.assert_called_with(1)
+
+    def test_manual_fallback_message(self):
+        """手動フォールバックメッセージが表示されることを確認"""
+        from automation_helper import DesktopLauncher, AutomationConfig
+
+        config = AutomationConfig()
+        launcher = DesktopLauncher(config)
+
+        # 標準出力をキャプチャ
+        from io import StringIO
+        import sys
+        captured_output = StringIO()
+        sys.stdout = captured_output
+
+        try:
+            launcher.show_manual_fallback_message()
+
+            output = captured_output.getvalue()
+
+            # メッセージに必要な要素が含まれていることを確認
+            self.assertIn("手動", output)
+            self.assertIn("起動", output)
+            self.assertIn(config.desktop_app_name, output)
+
+        finally:
+            sys.stdout = sys.__stdout__
+
+
 if __name__ == "__main__":
     unittest.main()
