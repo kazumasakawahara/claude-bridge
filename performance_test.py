@@ -118,9 +118,9 @@ def test_requirement_6_1_launch_detection():
     metrics_obj = PerformanceMetrics()
     metrics_obj.start_measurement()
 
-    # 起動チェックのシミュレーション
+    # 起動チェックのシミュレーション（is_running メソッドを使用）
     for _ in range(5):
-        launcher.check_app_running()
+        launcher.is_running()
         time.sleep(0.1)
 
     metrics = metrics_obj.stop_measurement()

@@ -59,6 +59,19 @@ class AutomationConfig:
         if config_path:
             self._load_from_file(config_path)
 
+    @classmethod
+    def load(cls, config_path: str) -> 'AutomationConfig':
+        """
+        設定ファイルから設定を読み込んで新しいインスタンスを作成
+
+        Args:
+            config_path: 設定ファイルのパス
+
+        Returns:
+            設定が読み込まれたAutomationConfigインスタンス
+        """
+        return cls(config_path=config_path)
+
     def _load_from_file(self, config_path: str):
         """
         設定ファイルから設定を読み込む
@@ -574,34 +587,57 @@ class ResponseMonitor:
         print(f"⚠️ タイムアウト: {elapsed:.1f}秒経過")
         return False
 
-    def read_response(self) -> Optional[Dict[str, Any]]:
+    def read_response(self, max_retries: int = 3) -> Optional[Dict[str, Any]]:
         """
         レスポンスファイルを読み込んで解析
+
+        Args:
+            max_retries: 読み込み失敗時の最大リトライ回数
 
         Returns:
             レスポンスデータの辞書、失敗時はNone
         """
-        try:
-            # ファイルの存在確認
-            if not self.response_file_path.exists():
-                print(f"⚠️ レスポンスファイルが見つかりません: {self.response_file_path}")
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # ファイルの存在確認
+                if not self.response_file_path.exists():
+                    if attempt == 0:
+                        print(f"⚠️ レスポンスファイルが見つかりません: {self.response_file_path}")
+                    return None
+
+                # JSONファイルを読み込み
+                response_data = json.loads(
+                    self.response_file_path.read_text(encoding="utf-8")
+                )
+
+                print(f"✅ レスポンスファイルを読み込みました")
+                return response_data
+
+            except json.JSONDecodeError as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"⚠️ JSONパースエラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    print(f"   1秒後にリトライします...")
+                    time.sleep(1)
+                else:
+                    print(f"⚠️ JSONパースエラー（最終試行）: {e}")
+
+            except (IOError, OSError) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    print(f"⚠️ ファイルI/Oエラー（試行 {attempt + 1}/{max_retries}）: {e}")
+                    print(f"   1秒後にリトライします...")
+                    time.sleep(1)
+                else:
+                    print(f"⚠️ ファイルI/Oエラー（最終試行）: {e}")
+
+            except Exception as e:
+                print(f"⚠️ 予期しないエラー: {e}")
                 return None
 
-            # JSONファイルを読み込み
-            response_data = json.loads(
-                self.response_file_path.read_text(encoding="utf-8")
-            )
-
-            print(f"✅ レスポンスファイルを読み込みました")
-            return response_data
-
-        except json.JSONDecodeError as e:
-            print(f"⚠️ JSONパースエラー: {e}")
-            return None
-
-        except Exception as e:
-            print(f"⚠️ レスポンス読み込みエラー: {e}")
-            return None
+        return None
 
     def cancel(self):
         """
@@ -1130,13 +1166,25 @@ class ErrorHandler:
         if isinstance(error, (SystemError, MemoryError, KeyboardInterrupt)):
             return "critical"
 
-        # 回復可能エラー
-        if isinstance(error, (FileNotFoundError, PermissionError, IOError)):
+        # ネットワーク関連エラー（回復可能）
+        if isinstance(error, (ConnectionError, TimeoutError)):
             return "recoverable"
-        if "file_operation" in context or "network" in context:
+        if "network" in context or "timeout" in context:
             return "recoverable"
 
-        # 警告
+        # ファイルI/Oエラー（回復可能）
+        if isinstance(error, (FileNotFoundError, PermissionError, IOError, OSError)):
+            return "recoverable"
+        if "file_operation" in context or "io" in context:
+            return "recoverable"
+
+        # JSON/データ解析エラー（警告）
+        if error.__class__.__name__ in ['JSONDecodeError', 'json.JSONDecodeError']:
+            return "warning"
+        if "json" in context or "parse" in context:
+            return "warning"
+
+        # バリデーションエラー（警告）
         if isinstance(error, (ValueError, TypeError)):
             return "warning"
         if "validation" in context:
@@ -1248,6 +1296,61 @@ class ErrorHandler:
             print(f"\n💡 警告: {error}")
             print(f"   コンテキスト: {context}\n")
             return True
+
+    def retry_on_error(
+        self,
+        func: callable,
+        max_retries: int = 3,
+        delay: float = 1.0,
+        backoff: float = 2.0,
+        context: str = ""
+    ) -> Any:
+        """
+        エラー発生時にリトライ実行するヘルパーメソッド
+
+        Args:
+            func: 実行する関数
+            max_retries: 最大リトライ回数
+            delay: 初回リトライまでの待機時間（秒）
+            backoff: リトライごとの待機時間増加率
+            context: エラーコンテキスト
+
+        Returns:
+            関数の実行結果
+
+        Raises:
+            最後のリトライでも失敗した場合の例外
+        """
+        import time
+
+        last_error = None
+        current_delay = delay
+
+        for attempt in range(max_retries):
+            try:
+                return func()
+            except Exception as e:
+                last_error = e
+                severity = self.classify_error(e, context)
+
+                # 致命的エラーはリトライしない
+                if severity == "critical":
+                    print(f"\n🚨 致命的エラーのためリトライを中止")
+                    raise e
+
+                # リトライ情報表示
+                print(f"\n⚠️  エラー発生（試行 {attempt + 1}/{max_retries}）: {e}")
+
+                if attempt < max_retries - 1:
+                    print(f"   {current_delay:.1f}秒後にリトライします...")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+                else:
+                    print(f"   最大リトライ回数に達しました")
+
+        # 全てのリトライが失敗
+        self.log_error(last_error, f"{context} (after {max_retries} retries)", "recoverable")
+        raise last_error
 
 
 class CheckpointManager:
