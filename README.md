@@ -10,15 +10,29 @@ Claude Codeが実装に困難を感じた時、自動的にClaude Desktopに助�
 
 ```
 ~/AI-Workspace/claude-bridge/
-├── bridge_helper.py              # ヘルパー関数
+├── bridge_helper.py              # 手動モード用ヘルパー関数
+├── automation_helper.py          # 自動モード用ヘルパー関数（新機能）
+├── automation_config.json        # 自動化設定ファイル（オプション）
+├── configure.py                  # 設定管理CLIツール
+├── dashboard.py                  # ステータスダッシュボード
+├── install.sh                    # インストールスクリプト
 ├── CLAUDE_PROTOCOL_TEMPLATE.md   # プロジェクトのCLAUDE.mdに追加するテンプレート
 ├── README.md                     # このファイル
-├── test_bridge.py                # テストスクリプト
+├── EXAMPLES.md                   # 使用例集
+├── requirements.txt              # 依存関係リスト
+├── test_bridge.py                # 手動モードテスト
+├── test_automation.py            # 自動モードテスト（76テスト）
+├── manual_test.py                # 手動テストシナリオ（4シナリオ）
+├── performance_test.py           # パフォーマンステスト（5ベンチマーク）
 ├── help-requests/                # Claude Codeからのリクエスト
 │   ├── req_20250104_143022.json
 │   └── req_20250104_143022/      # 分析用ファイル
 ├── help-responses/               # Claude Desktopからの回答
 │   └── req_20250104_143022_response.json
+├── backups/                      # ファイルバックアップ（自動生成）
+├── checkpoints/                  # チェックポイント（自動生成）
+├── logs/                         # エラーログ（自動生成）
+│   └── security/                 # セキュリティ監査ログ
 └── archive/                      # 完了したリクエスト
 ```
 
@@ -27,6 +41,112 @@ Claude Codeが実装に困難を感じた時、自動的にClaude Desktopに助�
 すでにセットアップは完了しています！
 
 ## 📝 使い方
+
+このシステムには**手動モード**と**自動モード（新機能）**の2つの使い方があります。
+
+### 🤖 自動モード（推奨）
+
+完全自動化されたワークフローで、Claude Desktopの起動からレスポンスの監視、提案の実行まで自動化されています。
+
+#### セットアップ
+
+**方法1: CLIツールを使用（推奨）**
+
+```bash
+cd ~/AI-Workspace/claude-bridge/
+
+# 対話的な設定
+python3 configure.py
+
+# クイックセットアップ（デフォルト値使用）
+python3 configure.py --quick
+
+# 現在の設定を確認
+python3 configure.py --show
+```
+
+**方法2: Pythonコードで設定**
+
+```python
+import sys
+from pathlib import Path
+sys.path.append(str(Path.home() / "AI-Workspace/claude-bridge"))
+
+from automation_helper import AutomatedBridge, AutomationConfig
+
+# 設定ファイルの作成（初回のみ）
+config = AutomationConfig()
+config.save("automation_config.json")
+```
+
+#### 基本的な使い方
+
+```python
+from automation_helper import AutomatedBridge
+
+# 自動化ブリッジを作成
+bridge = AutomatedBridge()
+
+# 完全自動ワークフロー実行
+response = bridge.run_automated_workflow(
+    title="パフォーマンス改善が必要",
+    problem="データ取り込みに5分かかる。目標は30秒以内。",
+    tried=[
+        "バッチサイズ変更 → 効果なし",
+        "並列処理 → メモリ不足"
+    ],
+    files_to_analyze=["src/loader.py", "src/client.py"]
+)
+
+# 自動的に以下が実行されます:
+# 1. リクエストファイルの作成
+# 2. Claude Desktopの起動
+# 3. レスポンスの監視（最大30分）
+# 4. 提案の実行とバックアップ
+# 5. エラー時の自動ロールバック
+```
+
+#### 設定オプション
+
+`automation_config.json`で以下をカスタマイズ可能:
+
+```json
+{
+    "enabled": true,
+    "auto_launch_desktop": true,
+    "launch_timeout": 60,
+    "response_timeout": 1800,
+    "polling_interval": 1.0,
+    "max_launch_retries": 3,
+    "retry_delay": 1
+}
+```
+
+| オプション | デフォルト | 説明 |
+|-----------|-----------|------|
+| `enabled` | `true` | 自動化機能の有効/無効 |
+| `auto_launch_desktop` | `true` | Claude Desktopの自動起動 |
+| `launch_timeout` | `60` | 起動タイムアウト（秒） |
+| `response_timeout` | `1800` | レスポンス待機時間（秒） |
+| `polling_interval` | `1.0` | ポーリング間隔（秒） |
+| `max_launch_retries` | `3` | 最大起動リトライ回数 |
+| `retry_delay` | `1` | リトライ間隔（秒） |
+
+#### 手動フォールバック
+
+自動起動が失敗した場合、手動モードに自動切り替え:
+
+```python
+# 自動起動失敗時の表示例
+⚠️ Claude Desktopの自動起動に失敗しました。
+手動で起動してください:
+  1. Claude Desktopを開く
+  2. 以下のファイルを分析: ~/AI-Workspace/claude-bridge/help-requests/req_XXX.json
+```
+
+### ✋ 手動モード
+
+従来の手動ワークフロー。細かい制御が必要な場合に使用します。
 
 ### Claude Code側
 
@@ -295,6 +415,90 @@ ask_claude_desktop(
 - ドメイン駆動設計の提案
 - グラフモデルの再構築
 - 段階的移行プラン
+
+## 🛠️ 管理ツール
+
+### インストールスクリプト
+
+新規インストールやセットアップの自動化:
+
+```bash
+cd ~/AI-Workspace/claude-bridge/
+./install.sh
+```
+
+機能:
+- ディレクトリ構造の自動作成
+- 依存関係のインストール
+- 初期設定ファイルの作成
+- セットアップ検証
+
+### ステータスダッシュボード
+
+システムの実行状況を可視化:
+
+```bash
+# 全ての情報を表示
+python3 dashboard.py
+
+# 未回答リクエストのみ
+python3 dashboard.py --pending
+
+# エラーサマリーのみ
+python3 dashboard.py --errors
+
+# システムヘルスチェック
+python3 dashboard.py --health
+
+# 自動化ステータス
+python3 dashboard.py --automation
+```
+
+表示内容:
+- 📊 システム統計（リクエスト数、レスポンス数、ディスク使用量）
+- 🤖 自動化ステータス（有効/無効、設定内容）
+- ⏳ 未回答リクエスト（作成日時、経過時間）
+- ✅ 最近完了したリクエスト（推奨事項数、コード有無）
+- ⚠️  エラーサマリー（過去24時間のエラー分類）
+- 🏥 システムヘルスチェック（必須ファイル/ディレクトリ確認）
+
+### セキュリティ監査
+
+ファイル操作の安全性を確認:
+
+```python
+from automation_helper import SecurityAuditor, AutomationConfig
+
+config = AutomationConfig()
+auditor = SecurityAuditor(config)
+
+# パスの安全性チェック
+is_safe, reason = auditor.is_path_safe(Path("/path/to/file"))
+
+# ファイル操作の監査
+result = auditor.audit_file_operation(
+    operation="write",
+    file_path=Path("/path/to/file"),
+    scan_content=True  # ファイル内容もスキャン
+)
+
+# バッチ操作の監査
+batch_result = auditor.audit_batch_operations([
+    {"operation": "write", "path": "/path/to/file1"},
+    {"operation": "read", "path": "/path/to/file2"}
+])
+
+# 監査レポートの生成
+report = auditor.generate_audit_report([result])
+print(report)
+```
+
+検出内容:
+- 🚨 システムディレクトリへのアクセス
+- 🔑 資格情報のハードコーディング（パスワード、APIキー等）
+- ⚠️  危険なコマンドパターン（rm -rf、sudo等）
+- 📦 大きなファイルサイズ（10MB以上）
+- 🔗 シンボリックリンクの使用
 
 ## 📞 サポート
 

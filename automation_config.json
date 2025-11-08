@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "auto_launch_desktop": true,
+  "desktop_app_name": "Claude",
+  "launch_timeout": 10,
+  "response_timeout": 1800,
+  "polling_interval": 1,
+  "auto_execute_proposals": false,
+  "create_backups": true,
+  "max_retries": 3
+}
