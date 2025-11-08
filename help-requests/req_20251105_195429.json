@@ -1,0 +1,18 @@
+{
+  "request_id": "req_20251105_195429",
+  "timestamp": "20251105_195429",
+  "title": "テスト: パフォーマンス問題",
+  "problem": "slow_function()が完了するのに30秒かかる。目標は1秒以内。",
+  "tried": [
+    "リスト内包表記に変更 → 効果なし",
+    "NumPy使用 → インストールエラー",
+    "キャッシュ追加 → ロジック的に不可能"
+  ],
+  "files_to_analyze": [
+    "test_code.py"
+  ],
+  "error_messages": "実行時間: 30.2秒",
+  "context": "",
+  "project_root": "/Users/k-kawahara/Ai-Workspace/claude-bridge",
+  "status": "pending"
+}

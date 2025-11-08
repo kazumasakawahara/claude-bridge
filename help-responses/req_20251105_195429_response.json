@@ -1,0 +1,31 @@
+{
+  "request_id": "req_20251105_195429",
+  "response_timestamp": "20251105_195429",
+  "analysis": {
+    "root_cause": "ネストしたループによるO(n²)の計算量",
+    "recommendations": [
+      {
+        "priority": 1,
+        "title": "アルゴリズムの見直し",
+        "description": "ネストループを避け、ベクトル化された計算を使用",
+        "code_example": "import numpy as np\nresult = np.outer(range(10000), range(10000)).flatten()"
+      },
+      {
+        "priority": 2,
+        "title": "結果のキャッシュ",
+        "description": "計算結果を保存し、再利用",
+        "code_example": "@lru_cache(maxsize=128)\ndef cached_slow_function(): ..."
+      }
+    ]
+  },
+  "implementation_steps": [
+    "1. NumPyをインストール: pip install numpy",
+    "2. slow_function()をベクトル化実装に変更",
+    "3. 性能測定（目標: 1秒以内）",
+    "4. 必要に応じてキャッシュ追加"
+  ],
+  "code_files": {
+    "test_code.py": "import numpy as np\n\ndef fast_function():\n    # ベクトル化された実装\n    i = np.arange(10000)\n    j = np.arange(10000)\n    result = np.outer(i, j).flatten()\n    return result.tolist()\n"
+  },
+  "additional_notes": "NumPyのインストールには `uv pip install numpy` を推奨"
+}
