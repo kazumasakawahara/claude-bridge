@@ -740,5 +740,113 @@ class TestResponseMonitor(unittest.TestCase):
                 self.assertFalse(success)
 
 
+class TestAutomatedBridge(unittest.TestCase):
+    """自動化ブリッジの統合テスト"""
+
+    def setUp(self):
+        """各テストの前に一時ディレクトリを作成"""
+        self.test_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        """各テストの後に一時ディレクトリを削除"""
+        if self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
+
+    def test_automated_bridge_initialization(self):
+        """AutomatedBridgeが正しく初期化されることを確認"""
+        from automation_helper import AutomatedBridge, AutomationConfig
+
+        config = AutomationConfig()
+        bridge = AutomatedBridge(config)
+
+        # 設定が正しく設定されていることを確認
+        self.assertIsNotNone(bridge.config)
+        self.assertIsNotNone(bridge.launcher)
+        # monitorは初期化時はNone（create_automated_request後に設定される）
+        self.assertIsNone(bridge.monitor)
+        self.assertIsNone(bridge.current_request_id)
+
+    def test_automated_bridge_inherits_from_claude_bridge(self):
+        """AutomatedBridgeがClaudeBridgeを継承していることを確認"""
+        from automation_helper import AutomatedBridge, AutomationConfig
+        from bridge_helper import ClaudeBridge
+
+        config = AutomationConfig()
+        bridge = AutomatedBridge(config)
+
+        # ClaudeBridgeのインスタンスであることを確認
+        self.assertIsInstance(bridge, ClaudeBridge)
+
+    def test_create_automated_request(self):
+        """自動化リクエストが作成されることを確認"""
+        from automation_helper import AutomatedBridge, AutomationConfig
+
+        config = AutomationConfig()
+        bridge = AutomatedBridge(config)
+
+        # リクエスト作成
+        request_id = bridge.create_automated_request(
+            title="Test Request",
+            problem="Test problem",
+            tried=["Method 1"],
+            files_to_analyze=[]
+        )
+
+        # リクエストIDが返されることを確認
+        self.assertIsNotNone(request_id)
+        self.assertTrue(request_id.startswith("req_"))
+
+    def test_run_automated_workflow_success(self):
+        """完全自動化ワークフローが正常に実行されることを確認"""
+        from automation_helper import AutomatedBridge, AutomationConfig
+
+        config = AutomationConfig()
+        bridge = AutomatedBridge(config)
+
+        # 各ステップをモック化
+        with patch.object(bridge.launcher, "launch_with_retry") as mock_launch:
+            with patch.object(bridge, "create_automated_request") as mock_request:
+                mock_launch.return_value = True
+                mock_request.return_value = "req_test_123"
+
+                # ワークフロー実行
+                result = bridge.run_automated_workflow(
+                    title="Test",
+                    problem="Test problem",
+                    tried=["Method 1"],
+                    files_to_analyze=[]
+                )
+
+                # 成功することを確認
+                self.assertIsNotNone(result)
+                self.assertEqual(result["request_id"], "req_test_123")
+
+    def test_show_manual_file_transfer_instructions(self):
+        """手動ファイル転送の指示が表示されることを確認"""
+        from automation_helper import AutomatedBridge, AutomationConfig
+
+        config = AutomationConfig()
+        bridge = AutomatedBridge(config)
+
+        # 標準出力をキャプチャ
+        from io import StringIO
+        import sys
+        captured_output = StringIO()
+        sys.stdout = captured_output
+
+        try:
+            bridge.show_manual_file_transfer_instructions("req_test_123")
+
+            output = captured_output.getvalue()
+
+            # メッセージに必要な要素が含まれていることを確認
+            self.assertIn("req_test_123", output)
+            self.assertIn("手動", output)
+            self.assertIn("ファイル", output)
+
+        finally:
+            sys.stdout = sys.__stdout__
+
+
 if __name__ == "__main__":
     unittest.main()

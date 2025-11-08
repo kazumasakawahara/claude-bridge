@@ -11,6 +11,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+# 既存のClaudeBridgeをインポート
+import sys
+sys.path.append(str(Path(__file__).parent))
+from bridge_helper import ClaudeBridge
+
 
 class AutomationConfig:
     """
@@ -527,3 +532,184 @@ class ResponseMonitor:
         """
         self.cancelled = True
         print("🛑 監視のキャンセルを要求しました")
+
+
+class AutomatedBridge(ClaudeBridge):
+    """
+    ClaudeBridgeを拡張した自動化ブリッジクラス
+
+    既存のClaudeBridge機能に加えて、完全自動化ワークフローを提供します。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        AutomatedBridgeを初期化
+
+        Args:
+            config: 自動化設定
+        """
+        # 親クラスの初期化
+        super().__init__()
+
+        self.config = config
+        self.launcher = DesktopLauncher(config)
+        self.monitor: Optional[ResponseMonitor] = None
+        self.current_request_id: Optional[str] = None
+
+    def create_automated_request(
+        self,
+        title: str,
+        problem: str,
+        tried: List[str],
+        files_to_analyze: List[str],
+        error_messages: str = "",
+        context: str = ""
+    ) -> str:
+        """
+        自動化されたヘルプリクエストを作成
+
+        親クラスのcreate_help_requestを使用してリクエストを作成し、
+        自動化のためのレスポンスモニターを設定します。
+
+        Args:
+            title: 問題の簡潔なタイトル
+            problem: 具体的な問題の説明
+            tried: 試した解決方法のリスト
+            files_to_analyze: 分析が必要なファイルパスのリスト
+            error_messages: エラーメッセージ（オプション）
+            context: 追加のコンテキスト情報（オプション）
+
+        Returns:
+            作成されたリクエストID
+        """
+        # 親クラスのメソッドでリクエスト作成
+        request_id = self.create_help_request(
+            title=title,
+            problem=problem,
+            tried=tried,
+            files_to_analyze=files_to_analyze,
+            error_messages=error_messages,
+            context=context
+        )
+
+        # レスポンスファイルのパスを設定
+        response_file = self.responses_path / f"{request_id}_response.json"
+
+        # レスポンスモニターを初期化
+        self.monitor = ResponseMonitor(self.config, str(response_file))
+        self.current_request_id = request_id
+
+        print(f"\n✅ 自動化リクエスト {request_id} を作成しました")
+
+        return request_id
+
+    def run_automated_workflow(
+        self,
+        title: str,
+        problem: str,
+        tried: List[str],
+        files_to_analyze: List[str],
+        error_messages: str = "",
+        context: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        """
+        完全自動化ワークフローを実行
+
+        リクエスト作成 → 起動 → 監視 → レスポンス取得の全体フローを実行します。
+
+        Args:
+            title: 問題の簡潔なタイトル
+            problem: 具体的な問題の説明
+            tried: 試した解決方法のリスト
+            files_to_analyze: 分析が必要なファイルパスのリスト
+            error_messages: エラーメッセージ（オプション）
+            context: 追加のコンテキスト情報（オプション）
+
+        Returns:
+            レスポンスデータの辞書、失敗時はNone
+        """
+        print("\n" + "="*60)
+        print("🚀 自動化ワークフローを開始します")
+        print("="*60 + "\n")
+
+        # ステップ1: リクエスト作成
+        print("📝 ステップ1: リクエスト作成")
+        request_id = self.create_automated_request(
+            title=title,
+            problem=problem,
+            tried=tried,
+            files_to_analyze=files_to_analyze,
+            error_messages=error_messages,
+            context=context
+        )
+
+        # ステップ2: Claude Desktop起動
+        if self.config.auto_launch_desktop:
+            print("\n🚀 ステップ2: Claude Desktop起動")
+            if not self.launcher.launch_with_retry():
+                print("\n⚠️  自動起動に失敗しました")
+                self.launcher.show_manual_fallback_message()
+                self.show_manual_file_transfer_instructions(request_id)
+                return {
+                    "request_id": request_id,
+                    "status": "manual_mode",
+                    "message": "手動モードに切り替えました"
+                }
+        else:
+            print("\n⏭️  ステップ2: 自動起動はスキップされました（設定で無効）")
+            self.show_manual_file_transfer_instructions(request_id)
+            return {
+                "request_id": request_id,
+                "status": "manual_mode",
+                "message": "手動モードです"
+            }
+
+        # ステップ3: レスポンス監視
+        print("\n🔍 ステップ3: レスポンス監視")
+        if self.monitor and self.monitor.wait_for_response():
+            # ステップ4: レスポンス読み込み
+            print("\n📖 ステップ4: レスポンス読み込み")
+            response = self.monitor.read_response()
+
+            if response:
+                print("\n✅ 自動化ワークフローが完了しました")
+                print("="*60 + "\n")
+                return {
+                    "request_id": request_id,
+                    "status": "success",
+                    "response": response
+                }
+
+        print("\n⚠️  レスポンスの取得に失敗しました")
+        self.show_manual_file_transfer_instructions(request_id)
+        return {
+            "request_id": request_id,
+            "status": "timeout",
+            "message": "タイムアウトしました"
+        }
+
+    def show_manual_file_transfer_instructions(self, request_id: str):
+        """
+        手動ファイル転送の指示を表示
+
+        自動化が失敗した際に、ユーザーに手動でファイルを転送する方法を指示します。
+
+        Args:
+            request_id: リクエストID
+        """
+        request_file = self.requests_path / f"{request_id}.json"
+        response_file = self.responses_path / f"{request_id}_response.json"
+
+        print("\n" + "="*60)
+        print("📋 手動ファイル転送の手順")
+        print("="*60)
+        print(f"\n⚠️  自動化が利用できません。以下の手順で手動実行してください:")
+        print(f"\n1. Claude Desktopを開く")
+        print(f"\n2. 以下のリクエストファイルの内容を確認:")
+        print(f"   {request_file}")
+        print(f"\n3. Claude Desktopで分析を依頼")
+        print(f"\n4. 回答を以下のファイルとして保存:")
+        print(f"   {response_file}")
+        print(f"\n5. 回答確認コマンドを実行:")
+        print(f"   python -c \"from bridge_helper import ClaudeBridge; ClaudeBridge().check_response('{request_id}')\"")
+        print("\n" + "="*60 + "\n")

@@ -1,0 +1,14 @@
+{
+  "request_id": "req_20251109_045459",
+  "timestamp": "20251109_045459",
+  "title": "Test Request",
+  "problem": "Test problem",
+  "tried": [
+    "Method 1"
+  ],
+  "files_to_analyze": [],
+  "error_messages": "",
+  "context": "",
+  "project_root": "/Users/k-kawahara/Ai-Workspace/claude-bridge",
+  "status": "pending"
+}
