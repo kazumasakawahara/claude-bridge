@@ -423,3 +423,107 @@ class DesktopLauncher:
         print(f"\n2. アプリケーションが起動したら、")
         print(f"   このプログラムを再実行してください")
         print("\n" + "=" * 60 + "\n")
+
+
+class ResponseMonitor:
+    """
+    Claude Desktopからのレスポンスファイルを監視するクラス
+
+    ファイルシステムポーリングによる監視を提供します。
+    """
+
+    def __init__(self, config: AutomationConfig, response_file_path: str):
+        """
+        ResponseMonitorを初期化
+
+        Args:
+            config: 自動化設定
+            response_file_path: 監視するレスポンスファイルのパス
+        """
+        self.config = config
+        self.response_file_path = Path(response_file_path)
+        self.cancelled = False  # キャンセルフラグ
+
+    def check_for_response(self) -> bool:
+        """
+        レスポンスファイルの存在を確認
+
+        Returns:
+            ファイルが存在する場合True、そうでない場合False
+        """
+        return self.response_file_path.exists()
+
+    def wait_for_response(self) -> bool:
+        """
+        レスポンスファイルが作成されるまで待機
+
+        polling_interval秒ごとにファイルの存在を確認します。
+        response_timeoutを超えた場合はタイムアウトします。
+
+        Returns:
+            レスポンス検出時True、タイムアウト時False
+        """
+        start_time = time.time()
+        timeout = self.config.response_timeout
+        interval = self.config.polling_interval
+
+        print(f"🔍 レスポンスファイルを監視中...")
+        print(f"   ファイル: {self.response_file_path}")
+        print(f"   タイムアウト: {timeout}秒")
+
+        while time.time() - start_time < timeout:
+            # キャンセルチェック
+            if self.cancelled:
+                print(f"⚠️ 監視がキャンセルされました")
+                return False
+
+            # レスポンスファイルの存在確認
+            if self.check_for_response():
+                print(f"✅ レスポンスファイルを検出しました")
+                return True
+
+            # polling_interval秒待機してCPU使用率を抑制
+            time.sleep(interval)
+
+        # タイムアウト
+        elapsed = time.time() - start_time
+        print(f"⚠️ タイムアウト: {elapsed:.1f}秒経過")
+        return False
+
+    def read_response(self) -> Optional[Dict[str, Any]]:
+        """
+        レスポンスファイルを読み込んで解析
+
+        Returns:
+            レスポンスデータの辞書、失敗時はNone
+        """
+        try:
+            # ファイルの存在確認
+            if not self.response_file_path.exists():
+                print(f"⚠️ レスポンスファイルが見つかりません: {self.response_file_path}")
+                return None
+
+            # JSONファイルを読み込み
+            response_data = json.loads(
+                self.response_file_path.read_text(encoding="utf-8")
+            )
+
+            print(f"✅ レスポンスファイルを読み込みました")
+            return response_data
+
+        except json.JSONDecodeError as e:
+            print(f"⚠️ JSONパースエラー: {e}")
+            return None
+
+        except Exception as e:
+            print(f"⚠️ レスポンス読み込みエラー: {e}")
+            return None
+
+    def cancel(self):
+        """
+        監視をキャンセル
+
+        wait_for_response()を中断します。
+        """
+        self.cancelled = True
+        print("🛑 監視のキャンセルを要求しました")

@@ -565,5 +565,180 @@ class TestDesktopLauncher(unittest.TestCase):
             sys.stdout = sys.__stdout__
 
 
+class TestResponseMonitor(unittest.TestCase):
+    """レスポンス監視機能のテスト"""
+
+    def setUp(self):
+        """各テストの前に一時ディレクトリを作成"""
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.response_file = self.test_dir / "response.json"
+
+    def tearDown(self):
+        """各テストの後に一時ディレクトリを削除"""
+        if self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
+
+    def test_check_for_response_file_not_exists(self):
+        """レスポンスファイルが存在しない場合を確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # ファイルが存在しないことを確認
+        exists = monitor.check_for_response()
+
+        self.assertFalse(exists)
+
+    def test_check_for_response_file_exists(self):
+        """レスポンスファイルが存在する場合を確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # ファイルを作成
+        self.response_file.write_text("{}", encoding="utf-8")
+
+        # ファイルが存在することを確認
+        exists = monitor.check_for_response()
+
+        self.assertTrue(exists)
+
+    def test_wait_for_response_success(self):
+        """レスポンスファイルが作成されるまで待機することを確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        config.response_timeout = 2  # 短いタイムアウト
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # check_for_responseが最初はFalse、次にTrueを返すようモック化
+        with patch.object(monitor, "check_for_response") as mock_check:
+            mock_check.side_effect = [False, False, True]
+
+            # time.sleepをモック化して高速化
+            with patch("time.sleep"):
+                success = monitor.wait_for_response()
+
+                # レスポンス検出成功を確認
+                self.assertTrue(success)
+                # check_for_responseが複数回呼ばれたことを確認
+                self.assertEqual(mock_check.call_count, 3)
+
+    def test_wait_for_response_timeout(self):
+        """タイムアウトを確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        config.response_timeout = 1  # 短いタイムアウト
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # check_for_responseが常にFalseを返すようモック化
+        with patch.object(monitor, "check_for_response") as mock_check:
+            mock_check.return_value = False
+
+            # time.sleepをモック化
+            with patch("time.sleep"):
+                success = monitor.wait_for_response()
+
+                # タイムアウトで失敗することを確認
+                self.assertFalse(success)
+
+    def test_polling_interval(self):
+        """ポーリング間隔が正しく適用されることを確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        config.polling_interval = 1
+        config.response_timeout = 3
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # check_for_responseが常にFalseを返すようモック化
+        with patch.object(monitor, "check_for_response") as mock_check:
+            mock_check.return_value = False
+
+            # time.sleepをモック化して呼び出しを記録
+            with patch("time.sleep") as mock_sleep:
+                monitor.wait_for_response()
+
+                # polling_interval秒で待機したことを確認
+                mock_sleep.assert_called_with(config.polling_interval)
+
+    def test_read_response_success(self):
+        """レスポンスファイルを正常に読み込めることを確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # テスト用のレスポンスファイルを作成
+        test_response = {
+            "status": "success",
+            "implementation_steps": ["Step 1", "Step 2"],
+            "code_files": [{"path": "test.py", "content": "print('hello')"}]
+        }
+        self.response_file.write_text(json.dumps(test_response), encoding="utf-8")
+
+        # レスポンスを読み込み
+        response = monitor.read_response()
+
+        # 正しく読み込まれたことを確認
+        self.assertIsNotNone(response)
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(len(response["implementation_steps"]), 2)
+
+    def test_read_response_file_not_found(self):
+        """レスポンスファイルが存在しない場合を確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # ファイルが存在しない状態で読み込み
+        response = monitor.read_response()
+
+        # Noneが返されることを確認
+        self.assertIsNone(response)
+
+    def test_read_response_invalid_json(self):
+        """無効なJSONファイルの場合を確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # 無効なJSONファイルを作成
+        self.response_file.write_text("{ invalid json", encoding="utf-8")
+
+        # レスポンスを読み込み
+        response = monitor.read_response()
+
+        # Noneが返されることを確認
+        self.assertIsNone(response)
+
+    def test_cancel_monitoring(self):
+        """監視のキャンセルが機能することを確認"""
+        from automation_helper import ResponseMonitor, AutomationConfig
+
+        config = AutomationConfig()
+        config.response_timeout = 10
+        monitor = ResponseMonitor(config, str(self.response_file))
+
+        # check_for_responseが常にFalseを返すようモック化
+        with patch.object(monitor, "check_for_response") as mock_check:
+            mock_check.return_value = False
+
+            # キャンセルフラグを設定
+            monitor.cancelled = True
+
+            # time.sleepをモック化
+            with patch("time.sleep"):
+                success = monitor.wait_for_response()
+
+                # キャンセルで失敗することを確認
+                self.assertFalse(success)
+
+
 if __name__ == "__main__":
     unittest.main()
