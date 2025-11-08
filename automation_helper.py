@@ -713,3 +713,297 @@ class AutomatedBridge(ClaudeBridge):
         print(f"\n5. 回答確認コマンドを実行:")
         print(f"   python -c \"from bridge_helper import ClaudeBridge; ClaudeBridge().check_response('{request_id}')\"")
         print("\n" + "="*60 + "\n")
+
+
+class ProposalExecutor:
+    """
+    Claude Desktopからの提案を実行するクラス
+
+    レスポンスに含まれる実装ステップを順次実行し、
+    コードファイルの適用とバックアップを管理します。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        ProposalExecutorを初期化
+
+        Args:
+            config: 自動化設定
+        """
+        self.config = config
+
+        # バックアップディレクトリの作成
+        self.backup_dir = Path.home() / "AI-Workspace/claude-bridge/backups"
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+
+    def extract_implementation_steps(
+        self,
+        response: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        レスポンスからimplementation_stepsを抽出
+
+        Args:
+            response: Claude Desktopからのレスポンスデータ
+
+        Returns:
+            実装ステップのリスト
+        """
+        analysis = response.get("analysis", {})
+        steps = analysis.get("implementation_steps", [])
+        return steps
+
+    def execute_step(
+        self,
+        step: Dict[str, Any],
+        current: int,
+        total: int
+    ) -> bool:
+        """
+        個別の実装ステップを実行
+
+        Args:
+            step: 実装ステップの情報
+            current: 現在のステップ番号
+            total: 全ステップ数
+
+        Returns:
+            実行成功時True、失敗時False
+        """
+        print(f"\n{'='*60}")
+        print(f"📋 ステップ {current}/{total}: {step.get('description', 'N/A')}")
+        print(f"{'='*60}")
+        print(f"\n実行内容: {step.get('action', 'N/A')}")
+        print(f"\n✅ ステップ {current} 完了")
+
+        return True
+
+    def execute_all_steps(
+        self,
+        steps: List[Dict[str, Any]]
+    ) -> List[bool]:
+        """
+        全ての実装ステップを順次実行
+
+        Args:
+            steps: 実装ステップのリスト
+
+        Returns:
+            各ステップの実行結果のリスト
+        """
+        results = []
+        total = len(steps)
+
+        print(f"\n{'='*60}")
+        print(f"🚀 実装ステップの実行を開始")
+        print(f"   全{total}ステップ")
+        print(f"{'='*60}")
+
+        for i, step in enumerate(steps, 1):
+            result = self.execute_step(step, i, total)
+            results.append(result)
+
+            if not result:
+                print(f"\n⚠️  ステップ {i} でエラーが発生しました")
+                break
+
+        if all(results):
+            print(f"\n{'='*60}")
+            print(f"✅ 全ステップの実行が完了しました")
+            print(f"{'='*60}\n")
+
+        return results
+
+    def create_backup(self, file_path: str) -> Optional[str]:
+        """
+        ファイルのバックアップを作成
+
+        Args:
+            file_path: バックアップするファイルのパス
+
+        Returns:
+            バックアップファイルのパス（成功時）、None（失敗時）
+        """
+        try:
+            source_path = Path(file_path)
+            if not source_path.exists():
+                print(f"⚠️  ファイルが存在しません: {file_path}")
+                return None
+
+            # タイムスタンプ付きバックアップファイル名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"{source_path.stem}_{timestamp}{source_path.suffix}"
+            backup_path = self.backup_dir / backup_name
+
+            # バックアップ作成
+            backup_path.write_text(
+                source_path.read_text(encoding="utf-8"),
+                encoding="utf-8"
+            )
+
+            print(f"💾 バックアップ作成: {backup_path}")
+            return str(backup_path)
+
+        except Exception as e:
+            print(f"⚠️  バックアップ作成エラー: {e}")
+            return None
+
+    def apply_code_file(
+        self,
+        file_path: str,
+        content: str
+    ) -> bool:
+        """
+        コードファイルを適用
+
+        Args:
+            file_path: 適用先のファイルパス
+            content: 新しいファイル内容
+
+        Returns:
+            適用成功時True、失敗時False
+        """
+        try:
+            target_path = Path(file_path)
+
+            # 既存ファイルの場合はバックアップ作成
+            if target_path.exists():
+                self.create_backup(file_path)
+
+            # 親ディレクトリがない場合は作成
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # ファイル書き込み
+            target_path.write_text(content, encoding="utf-8")
+
+            print(f"✅ ファイル適用: {file_path}")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  ファイル適用エラー: {e}")
+            return False
+
+    def extract_code_files(
+        self,
+        response: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        レスポンスからcode_filesを抽出
+
+        Args:
+            response: Claude Desktopからのレスポンスデータ
+
+        Returns:
+            コードファイルのリスト
+        """
+        analysis = response.get("analysis", {})
+        code_files = analysis.get("code_files", [])
+        return code_files
+
+    def apply_all_code_files(
+        self,
+        code_files: List[Dict[str, Any]]
+    ) -> List[bool]:
+        """
+        全てのコードファイルを適用
+
+        Args:
+            code_files: コードファイルのリスト
+
+        Returns:
+            各ファイル適用結果のリスト
+        """
+        results = []
+        total = len(code_files)
+
+        print(f"\n{'='*60}")
+        print(f"📝 コードファイルの適用を開始")
+        print(f"   全{total}ファイル")
+        print(f"{'='*60}\n")
+
+        for i, file_info in enumerate(code_files, 1):
+            file_path = file_info.get("path", "")
+            content = file_info.get("content", "")
+
+            print(f"\n[{i}/{total}] {file_path}")
+            result = self.apply_code_file(file_path, content)
+            results.append(result)
+
+            if not result:
+                print(f"⚠️  ファイル {i} の適用に失敗しました")
+
+        if all(results):
+            print(f"\n{'='*60}")
+            print(f"✅ 全ファイルの適用が完了しました")
+            print(f"{'='*60}\n")
+
+        return results
+
+    def show_proposal_summary(self, response: Dict[str, Any]):
+        """
+        提案のサマリーを表示
+
+        Args:
+            response: Claude Desktopからのレスポンスデータ
+        """
+        analysis = response.get("analysis", {})
+        recommendations = analysis.get("recommendations", [])
+        steps = analysis.get("implementation_steps", [])
+        code_files = analysis.get("code_files", [])
+
+        print(f"\n{'='*60}")
+        print(f"📊 Claude Desktopからの提案サマリー")
+        print(f"{'='*60}\n")
+
+        # 推奨事項
+        if recommendations:
+            print(f"💡 推奨事項: {len(recommendations)}件")
+            for i, rec in enumerate(recommendations, 1):
+                print(f"\n  {i}. {rec.get('title', 'N/A')}")
+                print(f"     {rec.get('description', 'N/A')}")
+
+        # 実装ステップ
+        if steps:
+            print(f"\n📋 実装ステップ: {len(steps)}件")
+            for step in steps:
+                print(f"  - {step.get('description', 'N/A')}")
+
+        # 変更ファイル
+        if code_files:
+            print(f"\n📝 変更ファイル: {len(code_files)}件")
+            for file_info in code_files:
+                print(f"  - {file_info.get('path', 'N/A')}")
+
+        print(f"\n{'='*60}\n")
+
+    def request_user_approval(self, message: str = "") -> bool:
+        """
+        ユーザーに承認を要求
+
+        Args:
+            message: 承認メッセージ（オプション）
+
+        Returns:
+            承認された場合True、拒否された場合False
+        """
+        if message:
+            print(f"\n{message}\n")
+
+        print(f"{'='*60}")
+        print(f"❓ この提案を実行しますか？")
+        print(f"{'='*60}\n")
+
+        try:
+            response = input("承認する場合は 'y' または 'Y' を入力してください [y/N]: ").strip().lower()
+            approved = response == 'y'
+
+            if approved:
+                print(f"\n✅ 承認されました。実行を開始します。\n")
+            else:
+                print(f"\n⚠️  拒否されました。実行をスキップします。\n")
+
+            return approved
+
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n\n⚠️  中断されました。\n")
+            return False

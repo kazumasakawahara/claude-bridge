@@ -11,6 +11,15 @@ import tempfile
 import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
+from automation_helper import (
+    AutomationConfig,
+    AutomationState,
+    ExecutionResult,
+    DesktopLauncher,
+    ResponseMonitor,
+    AutomatedBridge,
+    ProposalExecutor  # Task 5用
+)
 
 
 class TestAutomationConfig(unittest.TestCase):
@@ -846,6 +855,197 @@ class TestAutomatedBridge(unittest.TestCase):
 
         finally:
             sys.stdout = sys.__stdout__
+
+
+class TestProposalExecutor(unittest.TestCase):
+    """提案実行機能のテスト"""
+
+    def setUp(self):
+        """テスト前の準備"""
+        self.config = AutomationConfig()
+        self.executor = ProposalExecutor(self.config)
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        """テスト後のクリーンアップ"""
+        if self.temp_dir.exists():
+            shutil.rmtree(self.temp_dir)
+
+    def test_executor_initialization(self):
+        """ProposalExecutorが正しく初期化されることを確認"""
+        self.assertIsNotNone(self.executor.config)
+        self.assertIsNotNone(self.executor.backup_dir)
+        self.assertTrue(self.executor.backup_dir.exists())
+
+    def test_extract_implementation_steps(self):
+        """レスポンスからimplementation_stepsを抽出できることを確認"""
+        response = {
+            "analysis": {
+                "implementation_steps": [
+                    {"step": 1, "description": "Step 1", "action": "Do something"},
+                    {"step": 2, "description": "Step 2", "action": "Do more"}
+                ]
+            }
+        }
+
+        steps = self.executor.extract_implementation_steps(response)
+
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(steps[0]["step"], 1)
+        self.assertEqual(steps[1]["description"], "Step 2")
+
+    def test_extract_implementation_steps_no_steps(self):
+        """implementation_stepsがない場合を確認"""
+        response = {"analysis": {}}
+
+        steps = self.executor.extract_implementation_steps(response)
+
+        self.assertEqual(len(steps), 0)
+
+    def test_execute_step(self):
+        """個別ステップの実行を確認"""
+        step = {
+            "step": 1,
+            "description": "テストステップ",
+            "action": "テストアクションを実行"
+        }
+
+        result = self.executor.execute_step(step, 1, 3)
+
+        self.assertTrue(result)
+
+    def test_execute_all_steps(self):
+        """全ステップの順次実行を確認"""
+        steps = [
+            {"step": 1, "description": "Step 1", "action": "Action 1"},
+            {"step": 2, "description": "Step 2", "action": "Action 2"},
+            {"step": 3, "description": "Step 3", "action": "Action 3"}
+        ]
+
+        results = self.executor.execute_all_steps(steps)
+
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(results))
+
+    def test_create_backup(self):
+        """ファイルのバックアップが作成されることを確認"""
+        # テスト用ファイル作成
+        test_file = self.temp_dir / "test_code.py"
+        test_file.write_text("# Original content", encoding="utf-8")
+
+        # バックアップ作成
+        backup_path = self.executor.create_backup(str(test_file))
+
+        # バックアップが存在することを確認
+        self.assertIsNotNone(backup_path)
+        self.assertTrue(Path(backup_path).exists())
+
+        # バックアップ内容が元のファイルと一致することを確認
+        backup_content = Path(backup_path).read_text(encoding="utf-8")
+        self.assertEqual(backup_content, "# Original content")
+
+    def test_apply_code_file(self):
+        """コードファイルの適用を確認"""
+        # テスト用ファイル作成
+        test_file = self.temp_dir / "test_code.py"
+        test_file.write_text("# Original content", encoding="utf-8")
+
+        # 新しい内容
+        new_content = "# Updated content"
+
+        # ファイル適用
+        result = self.executor.apply_code_file(
+            str(test_file),
+            new_content
+        )
+
+        # 適用成功を確認
+        self.assertTrue(result)
+
+        # ファイル内容が更新されていることを確認
+        updated_content = test_file.read_text(encoding="utf-8")
+        self.assertEqual(updated_content, new_content)
+
+    def test_extract_code_files(self):
+        """レスポンスからcode_filesを抽出できることを確認"""
+        response = {
+            "analysis": {
+                "code_files": [
+                    {"path": "src/main.py", "content": "# Main file"},
+                    {"path": "src/utils.py", "content": "# Utils file"}
+                ]
+            }
+        }
+
+        code_files = self.executor.extract_code_files(response)
+
+        self.assertEqual(len(code_files), 2)
+        self.assertEqual(code_files[0]["path"], "src/main.py")
+        self.assertEqual(code_files[1]["content"], "# Utils file")
+
+    def test_apply_all_code_files(self):
+        """全コードファイルの適用を確認"""
+        # テスト用ファイル作成
+        file1 = self.temp_dir / "file1.py"
+        file2 = self.temp_dir / "file2.py"
+        file1.write_text("# Original 1", encoding="utf-8")
+        file2.write_text("# Original 2", encoding="utf-8")
+
+        code_files = [
+            {"path": str(file1), "content": "# Updated 1"},
+            {"path": str(file2), "content": "# Updated 2"}
+        ]
+
+        # 全ファイル適用
+        results = self.executor.apply_all_code_files(code_files)
+
+        # 全て成功することを確認
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(results))
+
+        # ファイル内容が更新されていることを確認
+        self.assertEqual(file1.read_text(encoding="utf-8"), "# Updated 1")
+        self.assertEqual(file2.read_text(encoding="utf-8"), "# Updated 2")
+
+    def test_show_proposal_summary(self):
+        """提案のサマリー表示を確認"""
+        response = {
+            "analysis": {
+                "recommendations": [
+                    {"title": "Recommendation 1", "description": "Do this"},
+                    {"title": "Recommendation 2", "description": "Do that"}
+                ],
+                "implementation_steps": [
+                    {"step": 1, "description": "Step 1"},
+                    {"step": 2, "description": "Step 2"}
+                ],
+                "code_files": [
+                    {"path": "file1.py", "content": "content1"},
+                    {"path": "file2.py", "content": "content2"}
+                ]
+            }
+        }
+
+        # サマリー表示（出力のみ確認）
+        self.executor.show_proposal_summary(response)
+
+    @patch('builtins.input', return_value='y')
+    def test_request_user_approval_accepted(self, mock_input):
+        """ユーザー承認が受け入れられることを確認"""
+        result = self.executor.request_user_approval("Test proposal")
+        self.assertTrue(result)
+
+    @patch('builtins.input', return_value='n')
+    def test_request_user_approval_rejected(self, mock_input):
+        """ユーザー承認が拒否されることを確認"""
+        result = self.executor.request_user_approval("Test proposal")
+        self.assertFalse(result)
+
+    @patch('builtins.input', return_value='Y')
+    def test_request_user_approval_uppercase(self, mock_input):
+        """ユーザー承認が大文字Yで受け入れられることを確認"""
+        result = self.executor.request_user_approval("Test proposal")
+        self.assertTrue(result)
 
 
 if __name__ == "__main__":
