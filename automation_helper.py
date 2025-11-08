@@ -1532,3 +1532,330 @@ class CheckpointManager:
             print(f"⚠️  チェックポイント一覧取得エラー: {e}")
 
         return checkpoints
+
+
+class SecurityAuditor:
+    """
+    セキュリティ監査クラス
+
+    ファイル操作の安全性を確認し、潜在的なセキュリティリスクを検出します。
+    """
+
+    def __init__(self, config: AutomationConfig):
+        """
+        セキュリティ監査を初期化
+
+        Args:
+            config: 自動化設定
+        """
+        self.config = config
+        self.bridge_dir = Path.home() / "AI-Workspace/claude-bridge"
+
+        # 危険なパターン
+        self.dangerous_patterns = [
+            # システムディレクトリ
+            "/System/", "/Library/", "/usr/", "/bin/", "/sbin/",
+            # 重要な設定ファイル
+            "/.ssh/", "/.aws/", "/.config/",
+            # シェルスクリプトでの危険なコマンド
+            "rm -rf /", "sudo rm", "> /dev/",
+            # 環境変数の危険な使用
+            "os.system(", "subprocess.call(",
+            # ネットワーク操作
+            "urllib.request", "requests.post",
+        ]
+
+        # 許可されたディレクトリ
+        self.allowed_directories = [
+            self.bridge_dir,
+            Path.home() / "AI-Workspace"
+        ]
+
+    def is_path_safe(self, file_path: Path) -> tuple[bool, str]:
+        """
+        パスが安全かどうかを確認
+
+        Args:
+            file_path: 確認するファイルパス
+
+        Returns:
+            (安全かどうか, 理由メッセージ)
+        """
+        try:
+            # パスを絶対パスに変換
+            abs_path = file_path.resolve()
+
+            # シンボリックリンクのチェック
+            if abs_path.is_symlink():
+                return False, "シンボリックリンクは許可されていません"
+
+            # 許可されたディレクトリ内かチェック
+            is_allowed = False
+            for allowed_dir in self.allowed_directories:
+                try:
+                    abs_path.relative_to(allowed_dir.resolve())
+                    is_allowed = True
+                    break
+                except ValueError:
+                    continue
+
+            if not is_allowed:
+                return False, f"許可されていないディレクトリ: {abs_path}"
+
+            # システムディレクトリのチェック
+            path_str = str(abs_path)
+            for dangerous in ["/System/", "/Library/", "/usr/", "/bin/", "/sbin/"]:
+                if dangerous in path_str:
+                    return False, f"システムディレクトリへのアクセス: {dangerous}"
+
+            return True, "安全"
+
+        except Exception as e:
+            return False, f"パス検証エラー: {e}"
+
+    def scan_file_content(self, file_path: Path) -> List[Dict[str, Any]]:
+        """
+        ファイル内容をスキャンして危険なパターンを検出
+
+        Args:
+            file_path: スキャンするファイル
+
+        Returns:
+            検出された問題のリスト
+        """
+        issues = []
+
+        try:
+            # ファイルサイズチェック（10MB以上は警告）
+            file_size = file_path.stat().st_size
+            if file_size > 10 * 1024 * 1024:
+                issues.append({
+                    "severity": "warning",
+                    "type": "large_file",
+                    "message": f"ファイルサイズが大きい: {file_size / (1024*1024):.2f}MB",
+                    "line": None
+                })
+
+            # テキストファイルのみスキャン
+            text_extensions = {'.py', '.sh', '.json', '.txt', '.md', '.yml', '.yaml'}
+            if file_path.suffix.lower() not in text_extensions:
+                return issues
+
+            # ファイル内容を読み込み
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+            lines = content.split('\n')
+
+            # 各行をスキャン
+            for line_num, line in enumerate(lines, 1):
+                for pattern in self.dangerous_patterns:
+                    if pattern in line:
+                        issues.append({
+                            "severity": "critical" if "rm -rf" in pattern or "sudo" in pattern else "warning",
+                            "type": "dangerous_pattern",
+                            "message": f"危険なパターン検出: {pattern}",
+                            "line": line_num,
+                            "content": line.strip()[:100]  # 最初の100文字のみ
+                        })
+
+            # 資格情報の検出
+            credential_patterns = [
+                (r'password\s*=\s*["\']', "パスワードのハードコーディング"),
+                (r'api[_-]?key\s*=\s*["\']', "APIキーのハードコーディング"),
+                (r'secret\s*=\s*["\']', "シークレットのハードコーディング"),
+                (r'token\s*=\s*["\']', "トークンのハードコーディング"),
+            ]
+
+            import re
+            for line_num, line in enumerate(lines, 1):
+                for pattern, description in credential_patterns:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        issues.append({
+                            "severity": "critical",
+                            "type": "credential",
+                            "message": description,
+                            "line": line_num,
+                            "content": line.strip()[:100]
+                        })
+
+        except Exception as e:
+            issues.append({
+                "severity": "warning",
+                "type": "scan_error",
+                "message": f"スキャンエラー: {e}",
+                "line": None
+            })
+
+        return issues
+
+    def audit_file_operation(
+        self,
+        operation: str,
+        file_path: Path,
+        scan_content: bool = False
+    ) -> Dict[str, Any]:
+        """
+        ファイル操作を監査
+
+        Args:
+            operation: 操作の種類 (read, write, delete, etc.)
+            file_path: 対象ファイルパス
+            scan_content: ファイル内容もスキャンするか
+
+        Returns:
+            監査結果
+        """
+        result = {
+            "operation": operation,
+            "file_path": str(file_path),
+            "timestamp": datetime.now().isoformat(),
+            "safe": True,
+            "issues": []
+        }
+
+        # パスの安全性チェック
+        is_safe, reason = self.is_path_safe(file_path)
+        if not is_safe:
+            result["safe"] = False
+            result["issues"].append({
+                "severity": "critical",
+                "type": "unsafe_path",
+                "message": reason,
+                "line": None
+            })
+            return result
+
+        # 内容スキャン（オプション）
+        if scan_content and file_path.exists() and file_path.is_file():
+            content_issues = self.scan_file_content(file_path)
+            if content_issues:
+                result["issues"].extend(content_issues)
+                # 致命的な問題がある場合は安全でないとマーク
+                if any(issue["severity"] == "critical" for issue in content_issues):
+                    result["safe"] = False
+
+        return result
+
+    def audit_batch_operations(
+        self,
+        operations: List[Dict[str, Any]],
+        scan_content: bool = False
+    ) -> Dict[str, Any]:
+        """
+        バッチ操作を監査
+
+        Args:
+            operations: 操作のリスト [{"operation": "write", "path": "/path/to/file"}, ...]
+            scan_content: ファイル内容もスキャンするか
+
+        Returns:
+            バッチ監査結果
+        """
+        batch_result = {
+            "total_operations": len(operations),
+            "safe_operations": 0,
+            "unsafe_operations": 0,
+            "timestamp": datetime.now().isoformat(),
+            "results": []
+        }
+
+        for op in operations:
+            operation = op.get("operation", "unknown")
+            file_path = Path(op.get("path", ""))
+
+            audit_result = self.audit_file_operation(operation, file_path, scan_content)
+            batch_result["results"].append(audit_result)
+
+            if audit_result["safe"]:
+                batch_result["safe_operations"] += 1
+            else:
+                batch_result["unsafe_operations"] += 1
+
+        return batch_result
+
+    def generate_audit_report(
+        self,
+        audit_results: List[Dict[str, Any]]
+    ) -> str:
+        """
+        監査レポートを生成
+
+        Args:
+            audit_results: 監査結果のリスト
+
+        Returns:
+            フォーマットされたレポート
+        """
+        report = []
+        report.append("=" * 60)
+        report.append("  セキュリティ監査レポート")
+        report.append("=" * 60)
+        report.append(f"\n生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+        # サマリー
+        total = len(audit_results)
+        safe = sum(1 for r in audit_results if r["safe"])
+        unsafe = total - safe
+
+        report.append("📊 サマリー:")
+        report.append(f"  総操作数: {total}")
+        report.append(f"  ✅ 安全: {safe}")
+        report.append(f"  ❌ 危険: {unsafe}")
+        report.append("")
+
+        # 危険な操作の詳細
+        if unsafe > 0:
+            report.append("⚠️  危険な操作の詳細:")
+            for result in audit_results:
+                if not result["safe"]:
+                    report.append(f"\n  📁 ファイル: {result['file_path']}")
+                    report.append(f"     操作: {result['operation']}")
+                    report.append(f"     問題:")
+
+                    for issue in result["issues"]:
+                        severity_icon = "🚨" if issue["severity"] == "critical" else "⚠️"
+                        report.append(f"       {severity_icon} {issue['message']}")
+                        if issue.get("line"):
+                            report.append(f"          行: {issue['line']}")
+                        if issue.get("content"):
+                            report.append(f"          内容: {issue['content']}")
+
+        report.append("\n" + "=" * 60)
+
+        return "\n".join(report)
+
+    def save_audit_log(
+        self,
+        audit_result: Dict[str, Any],
+        log_dir: Optional[Path] = None
+    ) -> Optional[Path]:
+        """
+        監査ログを保存
+
+        Args:
+            audit_result: 監査結果
+            log_dir: ログディレクトリ（Noneの場合はデフォルト）
+
+        Returns:
+            保存したログファイルのパス
+        """
+        if log_dir is None:
+            log_dir = self.bridge_dir / "logs" / "security"
+
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+
+            # ログファイル名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = log_dir / f"audit_{timestamp}.json"
+
+            # ログを保存
+            log_file.write_text(
+                json.dumps(audit_result, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+
+            return log_file
+
+        except Exception as e:
+            print(f"⚠️  監査ログ保存エラー: {e}")
+            return None

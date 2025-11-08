@@ -13,9 +13,13 @@ Claude Codeが実装に困難を感じた時、自動的にClaude Desktopに助�
 ├── bridge_helper.py              # 手動モード用ヘルパー関数
 ├── automation_helper.py          # 自動モード用ヘルパー関数（新機能）
 ├── automation_config.json        # 自動化設定ファイル（オプション）
+├── configure.py                  # 設定管理CLIツール
+├── dashboard.py                  # ステータスダッシュボード
+├── install.sh                    # インストールスクリプト
 ├── CLAUDE_PROTOCOL_TEMPLATE.md   # プロジェクトのCLAUDE.mdに追加するテンプレート
 ├── README.md                     # このファイル
 ├── EXAMPLES.md                   # 使用例集
+├── requirements.txt              # 依存関係リスト
 ├── test_bridge.py                # 手動モードテスト
 ├── test_automation.py            # 自動モードテスト（76テスト）
 ├── manual_test.py                # 手動テストシナリオ（4シナリオ）
@@ -28,6 +32,7 @@ Claude Codeが実装に困難を感じた時、自動的にClaude Desktopに助�
 ├── backups/                      # ファイルバックアップ（自動生成）
 ├── checkpoints/                  # チェックポイント（自動生成）
 ├── logs/                         # エラーログ（自動生成）
+│   └── security/                 # セキュリティ監査ログ
 └── archive/                      # 完了したリクエスト
 ```
 
@@ -410,6 +415,90 @@ ask_claude_desktop(
 - ドメイン駆動設計の提案
 - グラフモデルの再構築
 - 段階的移行プラン
+
+## 🛠️ 管理ツール
+
+### インストールスクリプト
+
+新規インストールやセットアップの自動化:
+
+```bash
+cd ~/AI-Workspace/claude-bridge/
+./install.sh
+```
+
+機能:
+- ディレクトリ構造の自動作成
+- 依存関係のインストール
+- 初期設定ファイルの作成
+- セットアップ検証
+
+### ステータスダッシュボード
+
+システムの実行状況を可視化:
+
+```bash
+# 全ての情報を表示
+python3 dashboard.py
+
+# 未回答リクエストのみ
+python3 dashboard.py --pending
+
+# エラーサマリーのみ
+python3 dashboard.py --errors
+
+# システムヘルスチェック
+python3 dashboard.py --health
+
+# 自動化ステータス
+python3 dashboard.py --automation
+```
+
+表示内容:
+- 📊 システム統計（リクエスト数、レスポンス数、ディスク使用量）
+- 🤖 自動化ステータス（有効/無効、設定内容）
+- ⏳ 未回答リクエスト（作成日時、経過時間）
+- ✅ 最近完了したリクエスト（推奨事項数、コード有無）
+- ⚠️  エラーサマリー（過去24時間のエラー分類）
+- 🏥 システムヘルスチェック（必須ファイル/ディレクトリ確認）
+
+### セキュリティ監査
+
+ファイル操作の安全性を確認:
+
+```python
+from automation_helper import SecurityAuditor, AutomationConfig
+
+config = AutomationConfig()
+auditor = SecurityAuditor(config)
+
+# パスの安全性チェック
+is_safe, reason = auditor.is_path_safe(Path("/path/to/file"))
+
+# ファイル操作の監査
+result = auditor.audit_file_operation(
+    operation="write",
+    file_path=Path("/path/to/file"),
+    scan_content=True  # ファイル内容もスキャン
+)
+
+# バッチ操作の監査
+batch_result = auditor.audit_batch_operations([
+    {"operation": "write", "path": "/path/to/file1"},
+    {"operation": "read", "path": "/path/to/file2"}
+])
+
+# 監査レポートの生成
+report = auditor.generate_audit_report([result])
+print(report)
+```
+
+検出内容:
+- 🚨 システムディレクトリへのアクセス
+- 🔑 資格情報のハードコーディング（パスワード、APIキー等）
+- ⚠️  危険なコマンドパターン（rm -rf、sudo等）
+- 📦 大きなファイルサイズ（10MB以上）
+- 🔗 シンボリックリンクの使用
 
 ## 📞 サポート
 
